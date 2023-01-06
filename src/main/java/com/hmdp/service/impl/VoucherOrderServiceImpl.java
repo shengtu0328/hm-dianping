@@ -4,11 +4,14 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.BooleanUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
+import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
+import com.hmdp.utils.SimpleRedisLockStage1;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -24,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -67,7 +71,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @PostConstruct
     private void init(){
         // TODO 需要秒杀下单功能的同学自己解开下面的注释
-        SECKILL_ORDER_EXECUTOR.submit(new VoucherOrderHandler());
+//        SECKILL_ORDER_EXECUTOR.submit(new VoucherOrderHandler());
     }
 
     private class VoucherOrderHandler implements Runnable{
@@ -155,10 +159,32 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private void handleVoucherOrder(VoucherOrder voucherOrder) {
         Long userId = voucherOrder.getId();
         // 创建锁对象
-        // SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
-        RLock lock = redissonClient.getLock("lock:order:" + userId);
+         SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+//        RLock lock = redissonClient.getLock("lock:order:" + userId);
         // 获取锁
-        boolean isLock = lock.tryLock();
+        boolean isLock = lock.tryLock(11111);
+        // 判断是否获取锁成功
+        if(!isLock){
+            // 获取锁失败，返回错误或重试
+            log.error("不允许重复下单");
+            return;
+        }
+        try {
+            // 获取代理对象（事务）
+            createVoucherOrder(voucherOrder);
+        } finally {
+            // 释放锁
+            lock.unlock();
+        }
+    }
+
+
+    private void handleVoucherOrder2(VoucherOrder voucherOrder) {
+        Long userId = voucherOrder.getId();
+        // 创建锁对象
+        SimpleRedisLockStage1 lock = new SimpleRedisLockStage1("order:" + userId, stringRedisTemplate);
+        // 获取锁
+        boolean isLock = lock.tryLock(1200);
         // 判断是否获取锁成功
         if(!isLock){
             // 获取锁失败，返回错误或重试
@@ -276,8 +302,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         // 4.返回订单id
         return Result.ok(orderId);
     }*/
-    /*@Override
-    public Result seckillVoucher(Long voucherId) {
+
+
+    @Override
+    public Result seckillVoucherOld(Long voucherId) {
         // 1.查询优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
         // 2.判断秒杀是否开始
@@ -298,10 +326,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         Long userId = UserHolder.getUser().getId();
         // 创建锁对象
-        // SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
-        RLock lock = redissonClient.getLock("lock:order:" + userId);
+         SimpleRedisLockStage1 lock = new SimpleRedisLockStage1("order:" + userId, stringRedisTemplate);
+//        RLock lock = redissonClient.getLock("lock:order:" + userId);
         // 获取锁
-        boolean isLock = lock.tryLock();
+        boolean isLock = lock.tryLock(1200);
         // 判断是否获取锁成功
         if(!isLock){
             // 获取锁失败，返回错误或重试
@@ -315,10 +343,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             // 释放锁
             lock.unlock();
         }
-    }*/
+    }
 
 
-    /*@Transactional
+    @Transactional
+    @Override
     public Result createVoucherOrder(Long voucherId) {
         // 5.一人一单
         Long userId = UserHolder.getUser().getId();
@@ -356,5 +385,5 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             // 7.返回订单id
             return Result.ok(orderId);
         }
-    }*/
+    }
 }
